@@ -26,7 +26,8 @@ class GameView @JvmOverloads constructor(
     private val hitboxMainCharacter = 0.5f
 
     //Main Character
-    private val mainCharacterBmpSrc = BitmapFactory.decodeResource(resources, R.drawable.main_character)
+    private val mainCharacterBmpSrc =
+        BitmapFactory.decodeResource(resources, R.drawable.main_character)
     private var mainCharacterBmp: Bitmap? = null
 
     //Main Character States
@@ -59,11 +60,46 @@ class GameView @JvmOverloads constructor(
     private val rewards = mutableListOf<Reward>()
 
     /**
+     * Obstacles
+     */
+
+    private val obstacleSpeed = dp(5f)
+    private val hitboxObstacle = 0.9f
+
+    //Obstacles Sprites
+    private val obstacleBmpSrc = BitmapFactory.decodeResource(resources, R.drawable.obstacle)
+
+    //Obstacle specs
+    private val obstacleAspectMin = 0.6f
+    private val obstacleAspectMax = 1.4f
+
+    //Obstacle Pojo
+    data class Obstacle(
+        var x: Float,
+        var y: Float,
+        var w: Float,
+        var h: Float,
+        var alive: Boolean = true,
+        val bmp: Bitmap
+    )
+
+    private var obstacle: Obstacle? = null
+
+    //Obstacle Inits
+    private var obstacleHeightMin = 0f
+    private var obstacleHeightMax = 0f
+    private var obstacleWidthMinPx = 0f
+    private var obstacleWidthMaxPx = 0f
+    private var lastObstacleSpawn = 0L
+    private var nextObstacleIntervalMs = 1400L
+
+    /**
      * Debug
      */
     private val showHitbox = true
     private val mainCharacterRect = RectF()
     private val rewardRect = RectF()
+    private val obstacleRect = RectF()
     private val hitMainCharacter = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = dp(2f)
@@ -74,6 +110,12 @@ class GameView @JvmOverloads constructor(
         style = Paint.Style.STROKE
         strokeWidth = dp(1.5f)
         color = Color.YELLOW
+    }
+
+    private val hitObstacle = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = dp(2f)
+        color = Color.BLACK
     }
 
     //Game Controls
@@ -100,7 +142,17 @@ class GameView @JvmOverloads constructor(
         rewardHeight = rewardWidth
         rewardBmp = rewardsBmpSrc.scale(rewardWidth.toInt(), rewardHeight.toInt())
 
+        //Obstacle
+        obstacleHeightMin = h * 0.08f
+        obstacleHeightMax = h / 3f
+
+        obstacleWidthMinPx = w * 0.1f
+        obstacleWidthMaxPx = w * 0.3f
+
         rewards.clear()
+        obstacle = null
+        lastObstacleSpawn = System.currentTimeMillis()
+        nextObstacleIntervalMs = randomObstacleInterval()
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -125,7 +177,8 @@ class GameView @JvmOverloads constructor(
         if (running) {
             //Main Character
             mainCharacterVelY += gravity
-            mainCharacterY = (mainCharacterY + mainCharacterVelY).coerceIn(0f, height - mainCharacterH)
+            mainCharacterY =
+                (mainCharacterY + mainCharacterVelY).coerceIn(0f, height - mainCharacterH)
 
             //Rewards
             if (Random.nextFloat() < rewardSpawnChance) {
@@ -134,6 +187,7 @@ class GameView @JvmOverloads constructor(
             }
 
             val it = rewards.iterator()
+
             while (it.hasNext()) {
                 val r = it.next()
                 r.x -= rewardSpeed
@@ -150,6 +204,43 @@ class GameView @JvmOverloads constructor(
                     it.remove()
                 }
             }
+
+            //Obstacle
+            val now = System.currentTimeMillis()
+            if ((obstacle == null || obstacle?.alive == false) && now - lastObstacleSpawn > nextObstacleIntervalMs) {
+                lastObstacleSpawn = now
+                nextObstacleIntervalMs = randomObstacleInterval()
+
+                //Random Height
+                val t = Random.nextFloat()
+                val heightRand =
+                    (obstacleHeightMin + t * (obstacleHeightMax - obstacleHeightMin)).coerceIn(
+                        obstacleHeightMin,
+                        obstacleHeightMax
+                    )
+
+                //Width
+                val ratio = Random.nextFloat() * (obstacleAspectMax - obstacleAspectMin) + obstacleAspectMin
+                var widthRand = heightRand * ratio
+                widthRand = widthRand.coerceIn(obstacleWidthMinPx, obstacleWidthMaxPx)
+
+                val bmp = obstacleBmpSrc.scale(widthRand.toInt(), heightRand.toInt())
+
+                //Anclar al suelo
+                obstacle = Obstacle(
+                    x = width + widthRand, y = height - heightRand, w = widthRand, h = heightRand, bmp = bmp
+                )
+            }
+
+            obstacle?.let { obs ->
+                if (obs.alive){
+                    obs.x -= obstacleSpeed
+                    if (obs.x + obs.w < 0f) obs.alive = false
+                }
+            }
+
+            if (obstacleCollides())
+                running = false
         }
 
         //Draw Main Character
@@ -157,10 +248,16 @@ class GameView @JvmOverloads constructor(
             canvas.drawBitmap(it, mainCharacterX, mainCharacterY, null)
         }
 
+        //Draw Rewards
         rewardBmp?.let { bmp ->
             rewards.forEach { reward ->
                 canvas.drawBitmap(bmp, reward.x, reward.y, null)
             }
+        }
+
+        //Draw Obstacles
+        obstacle?.takeIf { it.alive }?.let { obs ->
+            canvas.drawBitmap(obs.bmp, obs.x,obs.y, null)
         }
 
         //Hitbox
@@ -177,14 +274,14 @@ class GameView @JvmOverloads constructor(
 
             rewards.forEach { reward ->
                 setCenteredRect(
-                    rewardRect,
-                    reward.x,
-                    reward.y,
-                    rewardWidth,
-                    rewardHeight,
-                    hitboxRewards
+                    rewardRect, reward.x, reward.y, rewardWidth, rewardHeight, hitboxRewards
                 )
                 canvas.drawRect(rewardRect, hitReward)
+            }
+
+            obstacle?.takeIf { it.alive }?.let { obs ->
+                setCenteredRect(obstacleRect, obs.x,obs.y,obs.w,obs.h, hitboxObstacle)
+                canvas.drawRect(obstacleRect,hitObstacle)
             }
         }
 
@@ -213,13 +310,18 @@ class GameView @JvmOverloads constructor(
             hitboxMainCharacter
         )
         setCenteredRect(
-            rewardRect,
-            reward.x,
-            reward.y,
-            rewardWidth,
-            rewardHeight,
-            hitboxRewards
+            rewardRect, reward.x, reward.y, rewardWidth, rewardHeight, hitboxRewards
         )
-        return RectF.intersects(mainCharacterRect,rewardRect)
+        return RectF.intersects(mainCharacterRect, rewardRect)
+    }
+
+    private fun randomObstacleInterval():Long = Random.nextLong(1100L,1500L)
+
+    private fun obstacleCollides(): Boolean{
+        val obs = obstacle?:return false
+        if(!obs.alive) return false
+        setCenteredRect(mainCharacterRect, mainCharacterX,mainCharacterY, mainCharacterW, mainCharacterH,hitboxMainCharacter)
+        setCenteredRect(obstacleRect, obs.x,obs.y, obs.w, obs.h,hitboxObstacle)
+        return RectF.intersects(mainCharacterRect,obstacleRect)
     }
 }
